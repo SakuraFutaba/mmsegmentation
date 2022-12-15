@@ -101,13 +101,12 @@ class MyHead(BaseDecodeHead):
         assert num_inputs == len(self.in_index)
 
         self.convs = nn.ModuleList()
-        for i in range(num_inputs):
+        for i in range(num_inputs - 1):
             self.convs.append(
                 ConvModule(
                     in_channels=self.in_channels[i],
                     out_channels=self.channels,
                     kernel_size=1,
-                    stride=1,
                     norm_cfg=self.norm_cfg,
                     act_cfg=self.act_cfg))
 
