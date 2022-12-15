@@ -96,6 +96,7 @@ class MyHead(BaseDecodeHead):
         self.dilations = dilations
         self.aspp_layer = aspp_layer
         num_inputs = len(self.in_channels)
+        self.aspp_channel = self.in_channels[self.aspp_layer]
 
         assert num_inputs == len(self.in_index)
 
@@ -120,7 +121,7 @@ class MyHead(BaseDecodeHead):
         self.image_pool = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             ConvModule(
-                self.in_channels,
+                self.aspp_channel,
                 self.channels,
                 1,
                 conv_cfg=self.conv_cfg,
@@ -128,7 +129,7 @@ class MyHead(BaseDecodeHead):
                 act_cfg=self.act_cfg))
         self.aspp_modules = DepthwiseSeparableASPPModule(
             dilations=self.dilations,
-            in_channels=self.in_channels,
+            in_channels=self.aspp_channel,
             channels=self.channels,
             conv_cfg=self.conv_cfg,
             norm_cfg=self.norm_cfg,
