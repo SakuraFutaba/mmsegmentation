@@ -100,16 +100,16 @@ class MyHead(BaseDecodeHead):
 
         assert num_inputs == len(self.in_index)
 
-        # self.convs = nn.ModuleList()
-        # for i in range(num_inputs):
-        #     self.convs.append(
-        #         ConvModule(
-        #             in_channels=self.in_channels[i],
-        #             out_channels=self.channels,
-        #             kernel_size=1,
-        #             stride=1,
-        #             norm_cfg=self.norm_cfg,
-        #             act_cfg=self.act_cfg))
+        self.convs = nn.ModuleList()
+        for i in range(num_inputs):
+            self.convs.append(
+                ConvModule(
+                    in_channels=self.in_channels[i],
+                    out_channels=self.channels,
+                    kernel_size=1,
+                    stride=1,
+                    norm_cfg=self.norm_cfg,
+                    act_cfg=self.act_cfg))
 
         # self.fusion_conv = ConvModule(
         #     in_channels=self.channels * num_inputs,
@@ -189,13 +189,14 @@ class MyHead(BaseDecodeHead):
                 aspp_outs = torch.cat(aspp_outs, dim=1)
                 output = self.bottleneck(aspp_outs)
             else:
-                output = ConvModule(
-                    in_channels=self.in_channels[idx],
-                    out_channels=self.channels,
-                    kernel_size=1,
-                    conv_cfg = self.conv_cfg,
-                    norm_cfg=self.norm_cfg,
-                    act_cfg=self.act_cfg)(x)
+                # output = ConvModule(
+                #     in_channels=self.in_channels[idx],
+                #     out_channels=self.channels,
+                #     kernel_size=1,
+                #     conv_cfg = self.conv_cfg,
+                #     norm_cfg=self.norm_cfg,
+                #     act_cfg=self.act_cfg)(x)
+                output = self.convs[idx](x)
             outs.append(
                 resize(
                     input=output,
