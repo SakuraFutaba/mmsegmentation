@@ -120,3 +120,4 @@ mmseg/.mim
 *.pth
 
 log
+mmseg/models/decode_heads/1.ipynb

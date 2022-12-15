@@ -339,10 +339,10 @@ class MixVisionTransformer(BaseModule):
 
     def __init__(self,
                  in_channels=3,
-                 embed_dims=64,
+                 embed_dims=32,
                  num_stages=4,
-                 num_layers=[3, 4, 6, 3],
-                 num_heads=[1, 2, 4, 8],
+                 num_layers=[2, 2, 2, 2],
+                 num_heads=[1, 2, 5, 8],
                  patch_sizes=[7, 3, 3, 3],
                  strides=[4, 2, 2, 2],
                  sr_ratios=[8, 4, 2, 1],

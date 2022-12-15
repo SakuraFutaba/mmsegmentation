@@ -1,191 +1,209 @@
-# Copyright (c) OpenMMLab. All rights reserved.
+# Modified from
+# https://github.com/NVlabs/SegFormer/blob/master/mmseg/models/decode_heads/segformer_head.py
+#
+# This work is licensed under the NVIDIA Source Code License.
+#
+# Copyright (c) 2021, NVIDIA Corporation. All rights reserved.
+# NVIDIA Source Code License for StyleGAN2 with Adaptive Discriminator
+# Augmentation (ADA)
+#
+#  1. Definitions
+#  "Licensor" means any person or entity that distributes its Work.
+#  "Software" means the original work of authorship made available under
+# this License.
+#  "Work" means the Software and any additions to or derivative works of
+# the Software that are made available under this License.
+#  The terms "reproduce," "reproduction," "derivative works," and
+# "distribution" have the meaning as provided under U.S. copyright law;
+# provided, however, that for the purposes of this License, derivative
+# works shall not include works that remain separable from, or merely
+# link (or bind by name) to the interfaces of, the Work.
+#  Works, including the Software, are "made available" under this License
+# by including in or with the Work either (a) a copyright notice
+# referencing the applicability of this License to the Work, or (b) a
+# copy of this License.
+#  2. License Grants
+#      2.1 Copyright Grant. Subject to the terms and conditions of this
+#     License, each Licensor grants to you a perpetual, worldwide,
+#     non-exclusive, royalty-free, copyright license to reproduce,
+#     prepare derivative works of, publicly display, publicly perform,
+#     sublicense and distribute its Work and any resulting derivative
+#     works in any form.
+#  3. Limitations
+#      3.1 Redistribution. You may reproduce or distribute the Work only
+#     if (a) you do so under this License, (b) you include a complete
+#     copy of this License with your distribution, and (c) you retain
+#     without modification any copyright, patent, trademark, or
+#     attribution notices that are present in the Work.
+#      3.2 Derivative Works. You may specify that additional or different
+#     terms apply to the use, reproduction, and distribution of your
+#     derivative works of the Work ("Your Terms") only if (a) Your Terms
+#     provide that the use limitation in Section 3.3 applies to your
+#     derivative works, and (b) you identify the specific derivative
+#     works that are subject to Your Terms. Notwithstanding Your Terms,
+#     this License (including the redistribution requirements in Section
+#     3.1) will continue to apply to the Work itself.
+#      3.3 Use Limitation. The Work and any derivative works thereof only
+#     may be used or intended for use non-commercially. Notwithstanding
+#     the foregoing, NVIDIA and its affiliates may use the Work and any
+#     derivative works commercially. As used herein, "non-commercially"
+#     means for research or evaluation purposes only.
+#      3.4 Patent Claims. If you bring or threaten to bring a patent claim
+#     against any Licensor (including any claim, cross-claim or
+#     counterclaim in a lawsuit) to enforce any patents that you allege
+#     are infringed by any Work, then your rights under this License from
+#     such Licensor (including the grant in Section 2.1) will terminate
+#     immediately.
+#      3.5 Trademarks. This License does not grant any rights to use any
+#     Licensor’s or its affiliates’ names, logos, or trademarks, except
+#     as necessary to reproduce the notices described in this License.
+#      3.6 Termination. If you violate any term of this License, then your
+#     rights under this License (including the grant in Section 2.1) will
+#     terminate immediately.
+#  4. Disclaimer of Warranty.
+#  THE WORK IS PROVIDED "AS IS" WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, EITHER EXPRESS OR IMPLIED, INCLUDING WARRANTIES OR CONDITIONS OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, TITLE OR
+# NON-INFRINGEMENT. YOU BEAR THE RISK OF UNDERTAKING ANY ACTIVITIES UNDER
+# THIS LICENSE.
+#  5. Limitation of Liability.
+#  EXCEPT AS PROHIBITED BY APPLICABLE LAW, IN NO EVENT AND UNDER NO LEGAL
+# THEORY, WHETHER IN TORT (INCLUDING NEGLIGENCE), CONTRACT, OR OTHERWISE
+# SHALL ANY LICENSOR BE LIABLE TO YOU FOR DAMAGES, INCLUDING ANY DIRECT,
+# INDIRECT, SPECIAL, INCIDENTAL, OR CONSEQUENTIAL DAMAGES ARISING OUT OF
+# OR RELATED TO THIS LICENSE, THE USE OR INABILITY TO USE THE WORK
+# (INCLUDING BUT NOT LIMITED TO LOSS OF GOODWILL, BUSINESS INTERRUPTION,
+# LOST PROFITS OR DATA, COMPUTER FAILURE OR MALFUNCTION, OR ANY OTHER
+# COMMERCIAL DAMAGES OR LOSSES), EVEN IF THE LICENSOR HAS BEEN ADVISED OF
+# THE POSSIBILITY OF SUCH DAMAGES.
+
 import torch
-import torch.nn.functional as F
-from mmcv.cnn import ConvModule, Scale
-from torch import nn
+import torch.nn as nn
+from mmcv.cnn import ConvModule, DepthwiseSeparableConvModule
 
-from mmseg.core import add_prefix
-from ..builder import HEADS
-from ..utils import SelfAttentionBlock as _SelfAttentionBlock
-from .decode_head import BaseDecodeHead
-
-
-class PAM(_SelfAttentionBlock):
-    """Position Attention Module (PAM)
-
-    Args:
-        in_channels (int): Input channels of key/query feature.
-        channels (int): Output channels of key/query transform.
-    """
-
-    def __init__(self, in_channels, channels):
-        super(PAM, self).__init__(
-            key_in_channels=in_channels,
-            query_in_channels=in_channels,
-            channels=channels,
-            out_channels=in_channels,
-            share_key_query=False,
-            query_downsample=None,
-            key_downsample=None,
-            key_query_num_convs=1,
-            key_query_norm=False,
-            value_out_num_convs=1,
-            value_out_norm=False,
-            matmul_norm=False,
-            with_out=False,
-            conv_cfg=None,
-            norm_cfg=None,
-            act_cfg=None)
-
-        self.gamma = Scale(0)
-
-    def forward(self, x):
-        """Forward function."""
-        out = super(PAM, self).forward(x, x)
-
-        out = self.gamma(out) + x
-        return out
-
-
-class CAM(nn.Module):
-    """Channel Attention Module (CAM)"""
-
-    def __init__(self):
-        super(CAM, self).__init__()
-        self.gamma = Scale(0)
-
-    def forward(self, x):
-        """Forward function."""
-        batch_size, channels, height, width = x.size()
-        proj_query = x.view(batch_size, channels, -1)
-        proj_key = x.view(batch_size, channels, -1).permute(0, 2, 1)
-        energy = torch.bmm(proj_query, proj_key)
-        energy_new = torch.max(
-            energy, -1, keepdim=True)[0].expand_as(energy) - energy
-        attention = F.softmax(energy_new, dim=-1)
-        proj_value = x.view(batch_size, channels, -1)
-
-        out = torch.bmm(attention, proj_value)
-        out = out.view(batch_size, channels, height, width)
-
-        out = self.gamma(out) + x
-        return out
-
+from mmseg.models.builder import HEADS
+from mmseg.models.decode_heads.decode_head import BaseDecodeHead
+from mmseg.ops import resize
+from .sep_aspp_head import DepthwiseSeparableASPPModule
 
 @HEADS.register_module()
 class MyHead(BaseDecodeHead):
-    """Dual Attention Network for Scene Segmentation.
 
-    This head is the implementation of `DANet
-    <https://arxiv.org/abs/1809.02983>`_.
+    def __init__(self, dilations=(1, 6, 12, 18), aspp_layer=3, interpolate_mode='bilinear', **kwargs):
+        super().__init__(input_transform='multiple_select', **kwargs)
 
-    Args:
-        pam_channels (int): The channels of Position Attention Module(PAM).
-    """
+        self.interpolate_mode = interpolate_mode
+        self.dilations = dilations
+        self.aspp_layer = aspp_layer
+        num_inputs = len(self.in_channels)
 
-    def __init__(self, pam_channels, **kwargs):
-        super(MyHead, self).__init__(**kwargs)
-        self.pam_channels = pam_channels
-        self.pam_in_conv = ConvModule(
-            self.in_channels,
+        assert num_inputs == len(self.in_index)
+
+        # self.convs = nn.ModuleList()
+        # for i in range(num_inputs):
+        #     self.convs.append(
+        #         ConvModule(
+        #             in_channels=self.in_channels[i],
+        #             out_channels=self.channels,
+        #             kernel_size=1,
+        #             stride=1,
+        #             norm_cfg=self.norm_cfg,
+        #             act_cfg=self.act_cfg))
+
+        # self.fusion_conv = ConvModule(
+        #     in_channels=self.channels * num_inputs,
+        #     out_channels=self.channels,
+        #     kernel_size=1,
+        #     norm_cfg=self.norm_cfg)
+
+        # ASPP
+        self.image_pool = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            ConvModule(
+                self.in_channels,
+                self.channels,
+                1,
+                conv_cfg=self.conv_cfg,
+                norm_cfg=self.norm_cfg,
+                act_cfg=self.act_cfg))
+        self.aspp_modules = DepthwiseSeparableASPPModule(
+            dilations=self.dilations,
+            in_channels=self.in_channels,
+            channels=self.channels,
+            conv_cfg=self.conv_cfg,
+            norm_cfg=self.norm_cfg,
+            act_cfg=self.act_cfg)
+        self.bottleneck = ConvModule(
+            (len(dilations) + 1) * self.channels,
             self.channels,
             3,
             padding=1,
             conv_cfg=self.conv_cfg,
             norm_cfg=self.norm_cfg,
             act_cfg=self.act_cfg)
-        self.pam = PAM(self.channels, pam_channels)
-        self.pam_out_conv = ConvModule(
-            self.channels,
-            self.channels,
-            3,
-            padding=1,
-            conv_cfg=self.conv_cfg,
-            norm_cfg=self.norm_cfg,
-            act_cfg=self.act_cfg)
-        self.pam_conv_seg = nn.Conv2d(
-            self.channels, self.num_classes, kernel_size=1)
-
-        self.cam_in_conv = ConvModule(
-            self.in_channels,
-            self.channels,
-            3,
-            padding=1,
-            conv_cfg=self.conv_cfg,
-            norm_cfg=self.norm_cfg,
-            act_cfg=self.act_cfg)
-        self.cam = CAM()
-        self.cam_out_conv = ConvModule(
-            self.channels,
-            self.channels,
-            3,
-            padding=1,
-            conv_cfg=self.conv_cfg,
-            norm_cfg=self.norm_cfg,
-            act_cfg=self.act_cfg)
-        self.cam_conv_seg = nn.Conv2d(
-            self.channels, self.num_classes, kernel_size=1)
-
-    def pam_cls_seg(self, feat):
-        """PAM feature classification."""
-        if self.dropout is not None:
-            feat = self.dropout(feat)
-        output = self.pam_conv_seg(feat)
-        return output
-
-    def cam_cls_seg(self, feat):
-        """CAM feature classification."""
-        if self.dropout is not None:
-            feat = self.dropout(feat)
-        output = self.cam_conv_seg(feat)
-        return output
-
-    def pam_x_feat(self, x):
-        pam_feat = self.pam_in_conv(x)
-        pam_feat = self.pam(pam_feat)
-        pam_feat = self.pam_out_conv(pam_feat)
-        return pam_feat
-
-    def cam_x_feat(self, x):
-        cam_feat = self.cam_in_conv(x)
-        cam_feat = self.cam(cam_feat)
-        cam_feat = self.cam_out_conv(cam_feat)
-        return cam_feat
+        # assert c1_in_channels >= 0
+        # if c1_in_channels > 0:
+        #     self.c1_bottleneck = ConvModule(
+        #         c1_in_channels,
+        #         c1_channels,
+        #         1,
+        #         conv_cfg=self.conv_cfg,
+        #         norm_cfg=self.norm_cfg,
+        #         act_cfg=self.act_cfg)
+        # else:
+        #     self.c1_bottleneck = None
+        self.sep_bottleneck = nn.Sequential(
+            DepthwiseSeparableConvModule(
+                self.channels * num_inputs,
+                self.channels,
+                3,
+                padding=1,
+                conv_cfg = self.conv_cfg,
+                norm_cfg=self.norm_cfg,
+                act_cfg=self.act_cfg),
+            DepthwiseSeparableConvModule(
+                self.channels,
+                self.channels,
+                3,
+                padding=1,
+                conv_cfg = self.conv_cfg,
+                norm_cfg=self.norm_cfg,
+                act_cfg=self.act_cfg))
 
     def forward(self, inputs):
-        """Forward function."""
-        x = self._transform_inputs(inputs)
-        pam_feat = self.pam_x_feat(x)
-        pam_out = self.pam_cls_seg(pam_feat)
+        # Receive 4 stage backbone feature map: 1/4, 1/8, 1/16, 1/32
+        inputs = self._transform_inputs(inputs)
+        outs = []
+        for idx in range(len(inputs)):
+            x = inputs[idx]
+            if idx == self.aspp_layer:
+                aspp_outs = [
+                    resize(
+                        self.image_pool(x),
+                        size=x.size()[2:],
+                        mode='bilinear',
+                        align_corners=self.align_corners)
+                ]
+                aspp_outs.extend(self.aspp_modules(x))
+                aspp_outs = torch.cat(aspp_outs, dim=1)
+                output = self.bottleneck(aspp_outs)
+            else:
+                output = ConvModule(
+                    in_channels=self.in_channels[idx],
+                    out_channels=self.channels,
+                    kernel_size=1,
+                    conv_cfg = self.conv_cfg,
+                    norm_cfg=self.norm_cfg,
+                    act_cfg=self.act_cfg)(x)
+            outs.append(
+                resize(
+                    input=output,
+                    size=inputs[0].shape[2:],
+                    mode=self.interpolate_mode,
+                    align_corners=self.align_corners))
 
-        cam_feat = self.cam_x_feat(x)
-        cam_out = self.cam_cls_seg(cam_feat)
+        out = self.sep_bottleneck(torch.cat(outs, dim=1))
 
-        cam_pam_feat = self.cam_x_feat(pam_feat)
-        pam_cam_feat = self.pam_x_feat(cam_feat)
+        out = self.cls_seg(out)
 
-        feat_sum = pam_feat + cam_feat
-        feat_sum2 = torch.cat((feat_sum, cam_pam_feat, pam_cam_feat), -3)
-        pam_cam_out = self.cls_seg(feat_sum2)
-
-        return pam_cam_out, pam_out, cam_out
-
-    def forward_test(self, inputs, img_metas, test_cfg):
-        """Forward function for testing, only ``pam_cam`` is used."""
-        return self.forward(inputs)[0]
-
-    def losses(self, seg_logit, seg_label):
-        """Compute ``pam_cam``, ``pam``, ``cam`` loss."""
-        pam_cam_seg_logit, pam_seg_logit, cam_seg_logit = seg_logit
-        loss = dict()
-        loss.update(
-            add_prefix(
-                super(MyHead, self).losses(pam_cam_seg_logit, seg_label),
-                'pam_cam'))
-        loss.update(
-            add_prefix(
-                super(MyHead, self).losses(pam_seg_logit, seg_label), 'pam'))
-        loss.update(
-            add_prefix(
-                super(MyHead, self).losses(cam_seg_logit, seg_label), 'cam'))
-        return loss
+        return out
